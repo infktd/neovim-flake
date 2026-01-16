@@ -19,7 +19,7 @@
         "<leader>f" = "+ Find";
         "<leader>l" = "+ LSP";
         "<leader>g" = "+ Git";
-        "<leader>a" = "+ AI";
+        "<leader>a" = "+ AI/Sidekick";
         "<leader>c" = "+ Code";
         "<leader>b" = "+ Buffer";
         "<leader>e" = "Toggle File Tree";
@@ -74,28 +74,8 @@
         silent = true;
       }
       
-      # AI assistant keybinds
-      {
-        key = "<leader>at";
-        mode = "n";
-        action = "<cmd>Sidekick<CR>";
-        desc = "Toggle Sidekick";
-        silent = true;
-      }
-      {
-        key = "<leader>ac";
-        mode = "n";
-        action = "<cmd>SidekickSendBuffer<CR>";
-        desc = "Send Buffer to Sidekick";
-        silent = true;
-      }
-      {
-        key = "<leader>ab";
-        mode = "v";
-        action = ":SidekickSendVisual<CR>";
-        desc = "Send Selection to Sidekick";
-        silent = true;
-      }
+      # Note: Sidekick keybinds are defined in extra.nix setup string
+      # because they require Lua function calls
     ];
   };
 }

@@ -59,20 +59,59 @@
       # NOTE: Requires copilot-language-server LSP (provided by vim.assistant.copilot above)
       # and AI CLI tools to be installed separately:
       # - GitHub Copilot CLI: gh extension install github/gh-copilot
-      # - Claude Code CLI: https://docs.anthropic.com/en/docs/claude-code
-      # - Or any other AI CLI tool (Aider, etc.)
+      # - Claude Code CLI: npm install -g @anthropic-ai/claude-code
+      # - Or any other AI CLI tool (Aider, Codex, Gemini, etc.)
       sidekick-nvim = {
         package = pkgs.vimPlugins.sidekick-nvim;
         setup = ''
           require('sidekick').setup({
-            sidebar = {
-              position = "right",
-              width = 0.5,
+            cli = {
+              mux = {
+                enabled = true,
+                backend = "zellij", -- or "tmux" if you use it
+              },
             },
-            buffer = {
-              auto_attach = true,
-            }, 
           })
+          
+          -- Keybindings for sidekick
+          vim.keymap.set({'n', 't', 'i', 'x'}, '<C-.>', function() 
+            require('sidekick.cli').toggle() 
+          end, { desc = 'Sidekick Toggle CLI' })
+          
+          vim.keymap.set('n', '<leader>aa', function() 
+            require('sidekick.cli').toggle() 
+          end, { desc = 'Sidekick Toggle CLI' })
+          
+          vim.keymap.set('n', '<leader>as', function() 
+            require('sidekick.cli').select() 
+          end, { desc = 'Sidekick Select CLI' })
+          
+          vim.keymap.set('n', '<leader>ad', function() 
+            require('sidekick.cli').close() 
+          end, { desc = 'Sidekick Close CLI' })
+          
+          vim.keymap.set({'x', 'n'}, '<leader>at', function() 
+            require('sidekick.cli').send({ msg = '{this}' }) 
+          end, { desc = 'Send This to Sidekick' })
+          
+          vim.keymap.set('n', '<leader>af', function() 
+            require('sidekick.cli').send({ msg = '{file}' }) 
+          end, { desc = 'Send File to Sidekick' })
+          
+          vim.keymap.set('x', '<leader>av', function() 
+            require('sidekick.cli').send({ msg = '{selection}' }) 
+          end, { desc = 'Send Selection to Sidekick' })
+          
+          vim.keymap.set({'n', 'x'}, '<leader>ap', function() 
+            require('sidekick.cli').prompt() 
+          end, { desc = 'Sidekick Select Prompt' })
+          
+          -- Tab for Next Edit Suggestions (NES)
+          vim.keymap.set('n', '<Tab>', function()
+            if not require('sidekick').nes_jump_or_apply() then
+              return '<Tab>'
+            end
+          end, { expr = true, desc = 'Goto/Apply Next Edit Suggestion' })
         '';
       };
     };
