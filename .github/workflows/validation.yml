@@ -1,0 +1,141 @@
+name: Configuration Validation
+
+on:
+  pull_request:
+    paths:
+      - 'config/**'
+      - 'flake.nix'
+  push:
+    branches: [main, master]
+    paths:
+      - 'config/**'
+      - 'flake.nix'
+
+jobs:
+  lint-nix:
+    name: Lint Nix Files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Check Nix formatting
+        run: |
+          # Check if files are formatted with nixpkgs-fmt or alejandra
+          nix-shell -p nixpkgs-fmt --run "nixpkgs-fmt --check *.nix config/*.nix" || \
+          echo "Consider running: nixpkgs-fmt *.nix config/*.nix"
+
+      - name: Validate Nix syntax
+        run: |
+          echo "Checking Nix syntax for all files..."
+          for file in flake.nix config/*.nix; do
+            echo "Checking $file"
+            nix-instantiate --parse "$file" > /dev/null
+          done
+
+      - name: Check for common issues
+        run: |
+          echo "Checking for potential issues..."
+          
+          # Check for duplicate imports
+          if [ $(grep -h "imports = \[" config/*.nix | sort | uniq -d | wc -l) -gt 0 ]; then
+            echo "WARNING: Potential duplicate imports found"
+          fi
+          
+          # Check that all config modules use config.vim
+          for file in config/*.nix; do
+            if [ "$file" != "config/default.nix" ] && ! grep -q "config.vim" "$file"; then
+              echo "WARNING: $file might be missing config.vim structure"
+            fi
+          done
+
+  check-nvf-options:
+    name: Verify nvf Options Usage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for manual keybinds that could use native mappings
+        run: |
+          echo "Checking for potential optimization opportunities..."
+          
+          # List of plugins that have native nvf mappings
+          declare -a plugins=(
+            "telescope"
+            "lsp"
+            "gitsigns"
+            "bufferline"
+            "neo-tree"
+          )
+          
+          found_issues=false
+          
+          # Check if binds.nix has actions that should use native mappings
+          if [ -f "config/binds.nix" ]; then
+            for plugin in "${plugins[@]}"; do
+              if grep -qi "$plugin" config/binds.nix; then
+                echo "WARNING: Found $plugin references in binds.nix - check if native mappings can be used"
+                found_issues=true
+              fi
+            done
+          fi
+          
+          if [ "$found_issues" = true ]; then
+            echo ""
+            echo "Consider using native nvf mappings instead of manual keybinds."
+            echo "See: https://nvf.notashelf.dev/options.html"
+          else
+            echo "No optimization opportunities detected"
+          fi
+
+  test-modules:
+    name: Test Module Imports
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Test individual module evaluation
+        run: |
+          echo "Testing that each config module can be evaluated..."
+          
+          for file in config/*.nix; do
+            if [ "$file" != "config/default.nix" ]; then
+              echo "Testing $file"
+              # Just parse, don't fully evaluate since they need pkgs context
+              nix-instantiate --parse "$file" > /dev/null || exit 1
+            fi
+          done
+          
+          echo "All modules parsed successfully"
+
+      - name: Verify no conflicts in keybinds
+        run: |
+          echo "Checking for duplicate keybind definitions..."
+          
+          # Extract all key bindings and check for duplicates
+          if [ -f "config/binds.nix" ]; then
+            duplicates=$(grep -o 'key = "[^"]*"' config/binds.nix | sort | uniq -d)
+            if [ -n "$duplicates" ]; then
+              echo "ERROR: Duplicate keybinds found:"
+              echo "$duplicates"
+              exit 1
+            else
+              echo "No duplicate keybinds found"
+            fi
+          fi

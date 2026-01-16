@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-and-check:
+    name: Build and Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v14
+        with:
+          name: nix-community
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          skipPush: true
+
+      - name: Check flake
+        run: nix flake check --all-systems --show-trace
+
+      - name: Build for x86_64-linux
+        run: nix build .#packages.x86_64-linux.default --print-build-logs
+
+      - name: Verify neovim starts
+        run: |
+          ./result/bin/nvim --version
+          ./result/bin/nvim --headless -c "checkhealth" -c "quit" || true
+
+      - name: Check flake metadata
+        run: nix flake metadata
+
+  build-darwin:
+    name: Build for macOS (aarch64-darwin)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v14
+        with:
+          name: nix-community
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          skipPush: true
+
+      - name: Build for aarch64-darwin
+        run: nix build .#packages.aarch64-darwin.default --print-build-logs
+
+      - name: Verify neovim starts
+        run: |
+          ./result/bin/nvim --version
+          ./result/bin/nvim --headless -c "checkhealth" -c "quit" || true
+
+  validate-structure:
+    name: Validate Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check all config files are imported
+        run: |
+          echo "Checking that all .nix files in config/ are imported in default.nix"
+          
+          # Get all .nix files except default.nix
+          config_files=$(find config -name "*.nix" ! -name "default.nix" -exec basename {} \; | sort)
+          
+          # Check each is mentioned in default.nix
+          for file in $config_files; do
+            if ! grep -q "./$file" config/default.nix; then
+              echo "ERROR: $file not imported in config/default.nix"
+              exit 1
+            fi
+          done
+          
+          echo "All config files are properly imported"
+
+      - name: Verify documentation references
+        run: |
+          echo "Checking that README.md structure matches actual files"
+          
+          for file in config/*.nix; do
+            basename=$(basename "$file")
+            if [ "$basename" != "default.nix" ]; then
+              if ! grep -q "$basename" README.md; then
+                echo "WARNING: $basename not mentioned in README.md"
+              fi
+            fi
+          done
+
+  flake-update-test:
+    name: Test with Latest nvf
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Update flake inputs
+        run: nix flake update
+
+      - name: Build with updated inputs
+        run: nix build .#packages.x86_64-linux.default --print-build-logs
+
+      - name: Check for updates
+        id: check_updates
+        run: |
+          if git diff --quiet flake.lock; then
+            echo "updates=false" >> $GITHUB_OUTPUT
+          else
+            echo "updates=true" >> $GITHUB_OUTPUT
+            echo "### Available Updates" >> $GITHUB_STEP_SUMMARY
+            git diff flake.lock >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Report status
+        if: steps.check_updates.outputs.updates == 'true'
+        run: |
+          echo "Updates are available for dependencies"
+          echo "Consider creating a PR to update flake.lock"

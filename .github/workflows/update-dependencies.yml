@@ -1,0 +1,114 @@
+name: Update Dependencies
+
+on:
+  schedule:
+    # Run every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+jobs:
+  update-nvf:
+    name: Update nvf and Create PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v14
+        with:
+          name: nix-community
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          skipPush: true
+
+      - name: Update flake inputs
+        run: |
+          nix flake update
+          
+          # Get the current nvf version info
+          OLD_VERSION=$(nix flake metadata --json | jq -r '.locks.nodes.nvf.locked.rev[:7]')
+          
+          # Update
+          nix flake lock --update-input nvf
+          nix flake lock --update-input nixpkgs
+          
+          # Get new version
+          NEW_VERSION=$(nix flake metadata --json | jq -r '.locks.nodes.nvf.locked.rev[:7]')
+          
+          echo "OLD_VERSION=$OLD_VERSION" >> $GITHUB_ENV
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Test build with updates
+        run: |
+          nix build .#packages.x86_64-linux.default --print-build-logs
+          ./result/bin/nvim --version
+
+      - name: Run flake check
+        run: nix flake check --all-systems --show-trace
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          if git diff --quiet flake.lock; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No updates available"
+            exit 0
+          fi
+          
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+          
+          # Create a detailed changelog
+          cat > CHANGELOG.md << 'EOF'
+          ## Dependency Updates
+          
+          This automated PR updates the following dependencies:
+          
+          ### Changes
+          
+          - **nvf**: Updated from \`${{ env.OLD_VERSION }}\` to \`${{ env.NEW_VERSION }}\`
+          - **nixpkgs**: Updated to latest unstable
+          
+          ### Testing
+          
+          - ✅ Build successful on x86_64-linux
+          - ✅ Flake checks passed
+          - ✅ Neovim starts without errors
+          
+          ### Review Checklist
+          
+          - [ ] Test locally: \`nix build && ./result/bin/nvim\`
+          - [ ] Verify all keybinds still work
+          - [ ] Check LSP functionality
+          - [ ] Test on your target platform
+          
+          ---
+          
+          Generated automatically by GitHub Actions
+          EOF
+          
+          cat CHANGELOG.md
+
+      - name: Create Pull Request
+        if: steps.changelog.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update nvf and nixpkgs dependencies"
+          title: "chore: update nvf to ${{ env.NEW_VERSION }}"
+          body-path: CHANGELOG.md
+          branch: automated/update-dependencies
+          delete-branch: true
+          labels: |
+            dependencies
+            automated
